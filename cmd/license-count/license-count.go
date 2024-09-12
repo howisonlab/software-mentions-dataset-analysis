@@ -107,8 +107,19 @@ func runE(cmd *cobra.Command, args []string) error {
 }
 
 type Entry struct {
-	Id        string   `json:"id"`
-	Doi       string   `json:"doi"`
+	Id  string `json:"id"`
+	Doi string `json:"doi"`
+
+	Latex string `json:"latex"`
+	Xml   string `json:"xml"`
+	Pdf   string `json:"pdf"`
+
+	Arxiv   string `json:"arxiv"`
+	Pmid    string `json:"pmid"`
+	Pmcid   string `json:"pmcid"`
+	IstexId string `json:"istexId"`
+
+	// "json", "pdf", "latex", "xml"
 	Resources []string `json:"resources"`
 	License   string   `json:"license"`
 	OaLink    string   `json:"oa_link"`

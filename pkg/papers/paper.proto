@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+message Paper {
+  string doi = 1;
+
+  int32 year = 2;
+  string genre = 3;
+
+  bool is_oa = 4;
+
+  string title = 5;
+  string doi_url = 6;
+  string updated = 7;
+
+  string oa_status = 8;
+  string publisher = 9;
+
+  repeated Author z_authors = 10;
+
+  bool is_paratext = 11;
+  string journal_name = 12;
+
+  repeated OpenAccessLocation oa_locations = 13;
+
+  int32 data_standard = 14;
+  bool journal_is_oa = 15;
+  string journal_issns = 16;
+  string journal_issn_l = 17;
+  string published_date = 18;
+
+  OpenAccessLocation best_oa_location = 19;
+  OpenAccessLocation first_oa_location = 20;
+
+  bool journal_is_in_doai = 21;
+  bool has_repository_copy = 22;
+  repeated OpenAccessLocation oa_locations_embargoed = 23;
+
+  string id = 24;
+  Glutton glutton = 25;
+
+  string istexId = 26;
+  bool valid_fulltext_pdf = 27;
+}
+
+message Author {
+  string given = 1;
+  string family = 2;
+  string sequence = 3;
+  repeated string affiliation = 4;
+}
+
+message OpenAccessLocation {
+  string url = 1;
+  string pmh_id = 2;
+  bool is_best = 3;
+  string license = 4;
+  string oa_date = 5;
+  string updated = 6;
+  string version = 7;
+  string evidence = 8;
+  string host_type = 9;
+  string endpoint_id = 10;
+  string url_for_pdf = 11;
+  string url_for_landing_page = 12;
+  string repository_institution = 13;
+}
+
+message Glutton {
+  string url = 1;
+
+  Resource resource = 2;
+  int32 member = 3;
+
+  repeated string issn = 4;
+  string container_title = 5;
+
+  Issued issued = 6;
+  Author author = 7;
+
+  string doi = 8;
+  int32 is_referenced_by_count = 9;
+
+  Date published = 10;
+  Date published_print = 11;
+
+  repeated string alternative_id = 12;
+  repeated string subject = 13;
+
+  ContentDomain content_domain = 14;
+  repeated string title = 15;
+  repeated Link link = 16;
+
+  string source = 17;
+  string type = 18;
+  string publisher = 19;
+
+  JournalIssue journal_issue = 20;
+  string volume = 21;
+  int32 references_count = 22;
+  repeated IssnType issn_type = 23;
+  string language = 24;
+
+  string page = 25;
+  repeated string short_container_title = 26;
+  string istexId = 27;
+  string ark = 28;
+  string oaLink = 29;
+}
+
+message Resource {
+  Link primary = 1;
+}
+
+message Issued {
+  Date date_parts = 1;
+}
+
+message Date {
+  repeated int32 date_parts = 1;
+}
+
+message ContentDomain {
+  repeated string domain = 1;
+  bool crossmark_restriction = 2;
+}
+
+message JournalIssue {
+  int32 issue = 1;
+  Date published_print = 2;
+}
+
+message IssnType {
+  string value = 1;
+  string type = 2;
+}
+
+message Link {
+  string url = 1;
+  string content_type = 2;
+  string content_version = 3;
+  string intended_application = 4;
+}
