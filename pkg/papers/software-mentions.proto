@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+message SoftwareMentions {
+  string application = 1;
+  string version = 2;
+  string date = 3;
+  string md5 = 4;
+
+  repeated Page pages = 5;
+  repeated Mention mentions = 6;
+  repeated Reference references = 7;
+
+  int32 runtime = 8;
+  string id = 9;
+  Mention metadata = 10;
+  string original_file_path = 11;
+  string file_name = 12;
+}
+
+message Page {
+  float page_height = 1;
+  float page_width = 2;
+}
+
+message Mention {
+  SoftwareName software_name = 1;
+  string type = 2;
+  Version version = 3;
+  SoftwareName language = 4;
+  SoftwareName url = 5;
+
+  string context = 6;
+  ContextAttributes mentionContextAttributes = 7;
+  ContextAttributes documentContextAttributes = 8;
+  repeated Reference references = 9;
+}
+
+message SoftwareName {
+  string rawForm = 1;
+  string normalizedForm = 2;
+  int32 offsetStart = 3;
+  int32 offsetEnd = 4;
+  repeated BoundingBox boundingBoxes = 5;
+}
+
+message BoundingBox {
+  int32 p = 1;
+  float x = 2;
+  float y = 3;
+  float w = 4;
+  float h = 5;
+}
+
+message Version {
+  string rawForm = 1;
+  string normalizedForm = 2;
+  int32 offsetStart = 3;
+  int32 offsetEnd = 4;
+}
+
+message MentionReference {
+
+}
+
+message Reference {
+  int32 refKey = 1;
+  string tei = 2;
+}
+
+message ContextAttributes {
+  Attribute used = 1;
+  Attribute created = 2;
+  Attribute shared = 3;
+}
+
+message Attribute {
+  bool value = 1;
+  float score = 2;
+}
+
+message Metadata {
+  string id = 1;
+}
