@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+option go_package = "pkg/papers";
+
 message Paper {
   string doi = 1;
 
