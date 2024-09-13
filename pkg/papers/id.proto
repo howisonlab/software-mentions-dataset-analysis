@@ -4,43 +4,68 @@ option go_package = "pkg/papers";
 
 enum LicenseType {
   LICENSE_UNSPECIFIED = 0;
+  // "cc-by", "CC BY"
   LICENSE_CC_BY = 1;
+  // "cc-by-nc-nd", "CC BY-NC-ND"
   LICENSE_CC_BY_NC_ND = 2;
+  // "cc-by-nc", "CC BY-NC"
   LICENSE_CC_BY_NC = 3;
+  // "arXiv"
   LICENCE_ARXIV = 4;
+  // "cc-by-nc-sa", "CC BY-NC-SA"
   LICENSE_CC_BY_NC_SA = 5;
+  // "cc-by-sa", "CC BY-SA"
   LICENSE_CC_BY_SA = 6;
+  // "cc0", "CC0"
   LICENSE_CC0 = 7;
+  // "elsevier-specific: oa user license"
   LICENSE_ELSEVIER_SPECIFIC_OA_USER_LICENSE = 8;
+  // "implied-oa"
   LICENSE_IMPLIED_OA = 9;
+  // "pd"
   LICENSE_PUBLIC_DOMAIN = 10;
+  // "NO-CC CODE"
   LICENSE_NO_CC_CODE = 11;
+  // "cc-by-nd", "CC BY-ND"
   LICENSE_CC_BY_ND = 12;
+  // "publisher-specific license"
   LICENSE_PUBLISHER_SPECIFIC_LICENSE = 13;
+  // "publisher-specific, author manuscript"
   LICENSE_PUBLISHER_SPECIFIC_AUTHOR_MANUSCRIPT = 14;
+  // "acs-specific: authorchoice/editors choice usage agreement"
   LICENSE_ACS_SPECIFIC_CHOICE_USAGE_AGREEMENT = 15;
+  // "Open Government Licence - Canada"
   LICENSE_OPEN_GOVERNMENT_LICENSE_CANADA = 16;
 }
 
 enum ResourceType {
   RESOURCE_UNSPECIFIED = 0;
+  // "json"
   RESOURCE_JSON = 1;
+  // "pdf"
   RESOURCE_PDF = 2;
+  // "latex"
   RESOURCE_LATEX = 3;
+  // "xml"
   RESOURCE_XML = 4;
 }
 
 message PaperId {
-  int64 id = 1; // json = "id"
+  fixed64 id1 = 1; // json = "id[0:16]"
+  fixed64 id2 = 2; // json = "id[16:32]"
 
-  string doi = 2;
+  string doi = 3;
 
-  string arxiv = 3;
-  string pm_id = 4 [json_name = "pmid"];
-  string pmc_id = 5 [json_name = "pmcid"];
-  string istex_id = 6 [json_name = "istexId"];
+  string arxiv = 4;
 
-  repeated ResourceType resources = 7; // json = "resources"
-  LicenseType license = 8; // json = "license"
-  string oa_link = 9;
+  fixed32 pm_id = 5; // json = "pmid"
+  fixed32 pmc_id = 6; // json = "pmcid"
+
+  fixed64 istex_id1 = 7; // json = "istexId[0:16]"
+  fixed64 istex_id2 = 8; // json = "istexId[16:32]"
+  fixed32 istex_id3 = 9; // json = "istexId[32:40]"
+
+  repeated ResourceType resources = 10; // json = "resources"
+  LicenseType license = 11; // json = "license"
+  string oa_link = 12;
 }
