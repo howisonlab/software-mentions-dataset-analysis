@@ -57,7 +57,7 @@ func runE(_ *cobra.Command, args []string) error {
 
 	reader := bufio.NewReader(file)
 
-	licenseMap := make(map[string]int)
+	licenseMap := make([]int, papers.LicenseType_LICENSE_OPEN_GOVERNMENT_LICENSE_CANADA+1)
 
 	stats, err := file.Stat()
 	if err != nil {
@@ -80,9 +80,6 @@ func runE(_ *cobra.Command, args []string) error {
 	i := 0
 	nRead := 0
 	for {
-		// Reset entry for reuse.
-		entry.Reset()
-
 		nProtoBytes, err := binary.ReadUvarint(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -94,23 +91,20 @@ func runE(_ *cobra.Command, args []string) error {
 		if int(nProtoBytes) > len(bytes) {
 			bytes = make([]byte, nProtoBytes)
 		}
-		bytes := bytes[:nProtoBytes]
-		_, err = io.ReadFull(reader, bytes)
+		entryBytes := bytes[:nProtoBytes]
+		_, err = io.ReadFull(reader, entryBytes)
 		if err != nil {
 			return err
 		}
 
-		err = proto.Unmarshal(bytes, entry)
+		// Safe to reuse entry in this case since we aren't passing it anywhere else.
+		// Unmarshal automatically resets entry.
+		err = proto.Unmarshal(entryBytes, entry)
 		if err != nil {
 			return fmt.Errorf("%w: unmarshalling proto: %w", ErrCountLicenses, err)
 		}
 
-		license, err := papers.ToLicenseString(entry.License)
-		if err != nil {
-			return err
-		}
-
-		licenseMap[license]++
+		licenseMap[entry.License]++
 		nSizeBytes := binary.Size(nProtoBytes)
 		i++
 		nRead += nSizeBytes + int(nProtoBytes)
@@ -119,21 +113,29 @@ func runE(_ *cobra.Command, args []string) error {
 			nRead = 0
 		}
 	}
+	bar.IncrBy(nRead, time.Since(start))
 
-	licenses := make([]string, len(licenseMap))
+	licenses := make([]papers.LicenseType, len(licenseMap))
 	i = 0
 	for k := range licenseMap {
-		licenses[i] = k
+		licenses[i] = papers.LicenseType(k)
 		i++
 	}
 
-	sort.Slice(licenses, func(i, j int) bool {
+	sort.Slice(licenseMap, func(i, j int) bool {
 		return licenseMap[licenses[i]] > licenseMap[licenses[j]]
 	})
 
 	for _, license := range licenses {
-		fmt.Printf("%s;%d\n", license, licenseMap[license])
+		licenseStr, err := papers.ToLicenseString(license)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%s;%d\n", licenseStr, licenseMap[license])
 	}
+	// Add newline to prevent last line of output from being consumed by progress bar.
+	fmt.Println()
 
 	return nil
 }
