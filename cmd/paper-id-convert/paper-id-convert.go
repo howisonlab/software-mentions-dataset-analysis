@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/cobra"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
@@ -19,7 +20,9 @@ import (
 )
 
 func main() {
+	cmd.Flags().Bool("validate", false, "validate the transform is not lossy")
 	err := cmd.Execute()
+
 	if err != nil {
 		os.Exit(1)
 	}
@@ -35,7 +38,12 @@ var cmd = cobra.Command{
 
 var ErrConvert = errors.New("converting to proto")
 
-func runE(_ *cobra.Command, args []string) error {
+func runE(cmd *cobra.Command, args []string) error {
+	validate, err := cmd.Flags().GetBool("validate")
+	if err != nil {
+		return err
+	}
+
 	inPath := args[0]
 	if ext := filepath.Ext(inPath); ext != ".jsonl" {
 		return fmt.Errorf("%w: got input file extension %q but want %q", ErrConvert, ext, ".jsonl")
@@ -86,47 +94,36 @@ func runE(_ *cobra.Command, args []string) error {
 			return err
 		}
 
-		var entry papers.PaperIdJson
-		err = json.Unmarshal(line, &entry)
+		entry := &papers.PaperIdJson{}
+		err = json.Unmarshal(line, entry)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: unmarshalling JSON: %w", ErrConvert, err)
 		}
 
-		entry.Id1, entry.Id2, err = papers.ToId(entry.IdString)
+		idProto, err := entry.MarshalProto()
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: converting to proto: %w", ErrConvert, err)
 		}
 
-		entry.Resources, err = papers.ToResources(entry.ResourcesStrings)
-		if err != nil {
-			return err
+		if validate {
+			entry2 := &papers.PaperIdJson{}
+			err = entry2.UnmarshalProto(idProto)
+			if err != nil {
+				return err
+			}
+
+			if diff := cmp.Diff(entry, entry2, cmp.FilterPath(func(path cmp.Path) bool {
+				return path.Last().String() == ".License"
+			}, cmp.Comparer(func(left, right string) bool {
+				leftType, _ := papers.ToLicenseType(left)
+				rightType, _ := papers.ToLicenseType(right)
+				return leftType == rightType
+			}))); diff != "" {
+				return fmt.Errorf("%w: converting to proto and back is lossy: %s", ErrConvert, diff)
+			}
 		}
 
-		entry.License, err = papers.ToLicenseType(entry.LicenseString)
-		if err != nil {
-			return err
-		}
-
-		//entry.PmId = entry.PmIdString
-		//entry.PmcId = entry.PmcIdString
-		//entry.IstexId = entry.IstexIdString
-
-		entry.PmId, err = papers.ToPmId(entry.PmIdString)
-		if err != nil {
-			return err
-		}
-
-		entry.PmcId, err = papers.ToPmcId(entry.PmcIdString)
-		if err != nil {
-			return err
-		}
-
-		entry.IstexId1, entry.IstexId2, entry.IstexId3, err = papers.ToIstexId(entry.IstexIdString)
-		if err != nil {
-			return err
-		}
-
-		protoBytes, err := proto.Marshal(&entry.PaperId)
+		protoBytes, err := proto.Marshal(idProto)
 		if err != nil {
 			return err
 		}

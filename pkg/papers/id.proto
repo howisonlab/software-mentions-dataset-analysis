@@ -51,21 +51,41 @@ enum ResourceType {
 }
 
 message PaperId {
-  fixed64 id1 = 1; // json = "id[0:16]"
-  fixed64 id2 = 2; // json = "id[16:32]"
+  // id is the raw bytes of a UUID.
+  // Always 16 bytes.
+  UUID id = 1;
 
-  string doi = 3;
+  string doi = 2;
 
-  string arxiv = 4;
+  string arxiv = 3;
 
-  fixed32 pm_id = 5; // json = "pmid"
-  fixed32 pmc_id = 6; // json = "pmcid"
+  Pmid pmid = 4; // json = "pmid"
+  Pmcid pmcid = 5; // json = "pmcid"
 
-  fixed64 istex_id1 = 7; // json = "istexId[0:16]"
-  fixed64 istex_id2 = 8; // json = "istexId[16:32]"
-  fixed32 istex_id3 = 9; // json = "istexId[32:40]"
+  IstexId istex_id = 6;
 
-  repeated ResourceType resources = 10; // json = "resources"
-  LicenseType license = 11; // json = "license"
-  string oa_link = 12;
+  repeated ResourceType resources = 7; // json = "resources"
+  LicenseType license = 8; // json = "license"
+  string oa_link = 9;
+}
+
+message UUID {
+  bytes id = 1;
+}
+
+// Pmid is the PubMed ID, commonly written PMID.
+message Pmid {
+  fixed32 id = 1;
+}
+
+// Pmcid is the PubMed Central ID, commonly written PMCID.
+message Pmcid {
+  fixed32 id = 1;
+}
+
+// IstexId is the identifier assigned by https://www.istex.fr/
+message IstexId {
+  // id is the raw bytes of the istexId.
+  // Always 20 bytes.
+  bytes id = 1;
 }
