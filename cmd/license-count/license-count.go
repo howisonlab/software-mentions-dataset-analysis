@@ -2,18 +2,21 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
+	"github.com/willbeason/software-mentions/pkg/papers"
 	"golang.org/x/crypto/ssh/terminal"
+	"google.golang.org/protobuf/proto"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -25,12 +28,26 @@ var cmd = cobra.Command{
 	RunE:    runE,
 }
 
+var cpuprofile *string
+
 var ErrCountLicenses = errors.New("counting licenses")
 
-func runE(cmd *cobra.Command, args []string) error {
+func runE(_ *cobra.Command, args []string) error {
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal("could not create CPU profile: ", err)
+		}
+		defer f.Close() // error handling omitted for example
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal("could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
 	inPath := args[0]
-	if ext := filepath.Ext(inPath); ext != ".jsonl" {
-		return fmt.Errorf("%w: got file extension %q but want %q", ErrCountLicenses, ext, ".jsonl")
+	if ext := filepath.Ext(inPath); ext != ".pbl" {
+		return fmt.Errorf("%w: got file extension %q but want %q", ErrCountLicenses, ext, ".pbl")
 	}
 
 	file, err := os.Open(inPath)
@@ -57,39 +74,54 @@ func runE(cmd *cobra.Command, args []string) error {
 		mpb.AppendDecorators(decor.AverageETA(decor.ET_STYLE_GO)))
 
 	start := time.Now()
+	entry := &papers.PaperId{}
+	bytes := make([]byte, 0, 256)
+	incrEvery := 1000
+	i := 0
+	nRead := 0
 	for {
-		line, err := reader.ReadBytes('\n')
+		// Reset entry for reuse.
+		entry.Reset()
+
+		nProtoBytes, err := binary.ReadUvarint(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return err
+			return fmt.Errorf("%w: reading proto size: %w", ErrCountLicenses, err)
 		}
 
-		var entry Entry
-		err = json.Unmarshal(line, &entry)
+		if int(nProtoBytes) > len(bytes) {
+			bytes = make([]byte, nProtoBytes)
+		}
+		bytes := bytes[:nProtoBytes]
+		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
 			return err
 		}
 
-		license := entry.License
-		if strings.HasPrefix(license, "CC ") {
-			license = strings.ToLower(license)
-			license = "cc-" + license[3:]
-		} else if license == "CC0" {
-			license = "cc0"
-		} else if license == "NO-CC CODE" {
-			license = "no-cc code"
-		} else if license == "" {
-			license = "NONE"
+		err = proto.Unmarshal(bytes, entry)
+		if err != nil {
+			return fmt.Errorf("%w: unmarshalling proto: %w", ErrCountLicenses, err)
+		}
+
+		license, err := papers.ToLicenseString(entry.License)
+		if err != nil {
+			return err
 		}
 
 		licenseMap[license]++
-		bar.IncrBy(len(line), time.Since(start))
+		nSizeBytes := binary.Size(nProtoBytes)
+		i++
+		nRead += nSizeBytes + int(nProtoBytes)
+		if i%incrEvery == 0 {
+			bar.IncrBy(nRead, time.Since(start))
+			nRead = 0
+		}
 	}
 
 	licenses := make([]string, len(licenseMap))
-	i := 0
+	i = 0
 	for k := range licenseMap {
 		licenses[i] = k
 		i++
@@ -106,26 +138,9 @@ func runE(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-type Entry struct {
-	Id  string `json:"id"`
-	Doi string `json:"doi"`
-
-	Latex string `json:"latex"`
-	Xml   string `json:"xml"`
-	Pdf   string `json:"pdf"`
-
-	Arxiv   string `json:"arxiv"`
-	Pmid    string `json:"pmid"`
-	Pmcid   string `json:"pmcid"`
-	IstexId string `json:"istexId"`
-
-	// "json", "pdf", "latex", "xml"
-	Resources []string `json:"resources"`
-	License   string   `json:"license"`
-	OaLink    string   `json:"oa_link"`
-}
-
 func main() {
+	cpuprofile = cmd.Flags().String("cpuprofile", "", "write cpu profile to `file`")
+
 	err := cmd.Execute()
 	if err != nil {
 		os.Exit(1)

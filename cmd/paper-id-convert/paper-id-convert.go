@@ -83,6 +83,12 @@ func runE(cmd *cobra.Command, args []string) error {
 	}()
 
 	writer := bufio.NewWriter(outFile)
+	defer func() {
+		err = writer.Flush()
+		if err != nil {
+			fmt.Printf("%v: flushing output file %q: %v\n", ErrConvert, outPath, err)
+		}
+	}()
 
 	start := time.Now()
 	for {
@@ -131,7 +137,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		nProtoBytes := len(protoBytes)
 
 		var buf []byte
-		binary.AppendUvarint(buf, uint64(nProtoBytes))
+		buf = binary.AppendUvarint(buf, uint64(nProtoBytes))
 		_, err = writer.Write(buf)
 		if err != nil {
 			return fmt.Errorf("%w: writing length to %q: %w", ErrConvert, outPath, err)
