@@ -21,6 +21,7 @@ import (
 
 func main() {
 	cmd.Flags().Bool("validate", false, "validate the transform is not lossy")
+	cmd.Flags().Bool("oa-link", true, "include oa_link in the output")
 	err := cmd.Execute()
 
 	if err != nil {
@@ -40,6 +41,11 @@ var ErrConvert = errors.New("converting to proto")
 
 func runE(cmd *cobra.Command, args []string) error {
 	validate, err := cmd.Flags().GetBool("validate")
+	if err != nil {
+		return err
+	}
+
+	includeOaLink, err := cmd.Flags().GetBool("oa-link")
 	if err != nil {
 		return err
 	}
@@ -127,6 +133,10 @@ func runE(cmd *cobra.Command, args []string) error {
 			}))); diff != "" {
 				return fmt.Errorf("%w: converting to proto and back is lossy: %s", ErrConvert, diff)
 			}
+		}
+
+		if !includeOaLink {
+			idProto.OaLink = ""
 		}
 
 		protoBytes, err := proto.Marshal(idProto)

@@ -57,7 +57,7 @@ func runE(_ *cobra.Command, args []string) error {
 
 	reader := bufio.NewReader(file)
 
-	licenseMap := make([]int, papers.LicenseType_LICENSE_OPEN_GOVERNMENT_LICENSE_CANADA+1)
+	licenseMap := make([]int, len(papers.LicenseType_name))
 
 	stats, err := file.Stat()
 	if err != nil {
@@ -75,8 +75,8 @@ func runE(_ *cobra.Command, args []string) error {
 
 	start := time.Now()
 	entry := &papers.PaperId{}
-	bytes := make([]byte, 0, 256)
-	incrEvery := 1000
+	bytes := make([]byte, 0, 1<<8)
+	incrEvery := 1 << 10
 	i := 0
 	nRead := 0
 	for {
