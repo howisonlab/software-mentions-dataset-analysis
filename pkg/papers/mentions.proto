@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+option go_package = "pkg/papers";
+
+import "id.proto";
+
+message Mentions {
+  UUID id = 1;
+  repeated Mention mentions = 2;
+}
+
+message Mention {
+  SoftwareName software_name = 1;
+}
+
+message SoftwareName {
+  string normalized_form = 1;
+  string wikidata_id = 2;
+}
