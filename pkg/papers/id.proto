@@ -2,6 +2,74 @@ syntax = "proto3";
 
 option go_package = "pkg/papers";
 
+message PaperId {
+  // id uniquely identifies a paper.
+  UUID id = 1;
+
+  // doi is the literal DOI. Not expressed as an IRI.
+  string doi = 2;
+
+  // arxiv is the paper's arxiv identifier.
+  // Example: arXiv:1501.00001
+  // See: https://info.arxiv.org/help/arxiv_identifier.html
+  string arxiv = 3;
+
+  Pmid pmid = 4; // json = "pmid"
+  Pmcid pmcid = 5; // json = "pmcid"
+
+  IstexId istex_id = 6;
+
+  // resources is the formats the paper is available at oa_link.
+  repeated ResourceType resources = 7; // json = "resources"
+  LicenseType license = 8; // json = "license"
+
+  // oa_link is the open-access IRI to the paper.
+  string oa_link = 9;
+}
+
+message UUID {
+  // id is the raw bytes of a UUID.
+  // Marshalled/unmarshalled with https://pkg.go.dev/github.com/google/UUID.
+  // Do NOT treat as an encoded GUID.
+  // Always exactly 16 bytes.
+  bytes id = 1;
+}
+
+// Pmid is a PubMed ID, commonly written PMID.
+// A PMID is always expressed purely numerically.
+message Pmid {
+  fixed32 id = 1;
+}
+
+// Pmcid is a PubMed Central ID, commonly written PMCID.
+// A PMCID in string form is "PMC${id}" or, if versioned, "PMC${id}.${version}".
+// To retrieve the corresponding PMID, see:
+// https://www.ncbi.nlm.nih.gov/pmc/tools/developers/
+message Pmcid {
+  // id is the numeric portion of the unversioned PMCID.
+  fixed32 id = 1;
+  // version is the version of the article.
+  // Versions begin at "1"; treat zero values as unversioned.
+  uint32 version = 2;
+}
+
+// IstexId is the identifier assigned by https://www.istex.fr/
+// An IstexId in string form is the bytes expressed in capitalized
+// hexadecimal.
+message IstexId {
+  // id is the raw bytes of the istexId.
+  // Always 20 bytes.
+  bytes id = 1;
+}
+
+enum ResourceType {
+  RESOURCE_UNSPECIFIED = 0;
+  RESOURCE_JSON = 1; // "json"
+  RESOURCE_PDF = 2; // "pdf"
+  RESOURCE_LATEX = 3; // "latex"
+  RESOURCE_XML = 4; // "xml"
+}
+
 enum LicenseType {
   LICENSE_UNSPECIFIED = 0;
   // "cc-by", "CC BY"
@@ -36,56 +104,4 @@ enum LicenseType {
   LICENSE_ACS_SPECIFIC_CHOICE_USAGE_AGREEMENT = 15;
   // "Open Government Licence - Canada"
   LICENSE_OPEN_GOVERNMENT_LICENSE_CANADA = 16;
-}
-
-enum ResourceType {
-  RESOURCE_UNSPECIFIED = 0;
-  // "json"
-  RESOURCE_JSON = 1;
-  // "pdf"
-  RESOURCE_PDF = 2;
-  // "latex"
-  RESOURCE_LATEX = 3;
-  // "xml"
-  RESOURCE_XML = 4;
-}
-
-message PaperId {
-  // id is the raw bytes of a UUID.
-  // Always 16 bytes.
-  UUID id = 1;
-
-  string doi = 2;
-
-  string arxiv = 3;
-
-  Pmid pmid = 4; // json = "pmid"
-  Pmcid pmcid = 5; // json = "pmcid"
-
-  IstexId istex_id = 6;
-
-  repeated ResourceType resources = 7; // json = "resources"
-  LicenseType license = 8; // json = "license"
-  string oa_link = 9;
-}
-
-message UUID {
-  bytes id = 1;
-}
-
-// Pmid is the PubMed ID, commonly written PMID.
-message Pmid {
-  fixed32 id = 1;
-}
-
-// Pmcid is the PubMed Central ID, commonly written PMCID.
-message Pmcid {
-  fixed32 id = 1;
-}
-
-// IstexId is the identifier assigned by https://www.istex.fr/
-message IstexId {
-  // id is the raw bytes of the istexId.
-  // Always 20 bytes.
-  bytes id = 1;
 }
