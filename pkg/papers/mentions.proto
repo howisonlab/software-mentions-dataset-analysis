@@ -2,7 +2,7 @@ syntax = "proto3";
 
 option go_package = "pkg/papers";
 
-import "id.proto";
+import "papers/id.proto";
 
 message Mentions {
   UUID id = 1;
