@@ -1,21 +1,24 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
+	bondsmith_io "github.com/willbeason/bondsmith-io"
 	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
+
+const IncEvery = 1 << 10
 
 func main() {
 	cmd.Flags().String("pattern", "", "suffix to match against file names")
@@ -28,7 +31,7 @@ func main() {
 }
 
 var cmd = cobra.Command{
-	Use:     "license-count FILE",
+	Use:     "json-stats FILE | DIR",
 	Short:   "Collect statistics about keys and values in .jsonl files",
 	Args:    cobra.ExactArgs(1),
 	Version: "0.1.0",
@@ -66,12 +69,12 @@ func runE(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("%w: compiling pattern %q: %w", ErrJsonStats, pattern, err)
 			}
 		}
-		err = processDirectory(inPath, p, 0, matcher, keyValueSets)
+		err = processDirectory(p, inPath, 0, matcher, keyValueSets)
 		if err != nil {
 			return err
 		}
-	} else if filepath.Ext(inPath) == ".jsonl" {
-		err = processJsonlFile(inPath, p, keyValueSets)
+	} else if strings.HasSuffix(inPath, ".jsonl") || strings.HasSuffix(inPath, ".jsonl.gz") {
+		err = processJsonFile(p, inPath, keyValueSets)
 		if err != nil {
 			return err
 		}
@@ -121,19 +124,36 @@ func runE(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, pkc := range pkcs {
+		if pkc.Count < 10 {
+			continue
+		}
 		_, err = fmt.Fprintf(outFile, "%s;%q;%d\n", pkc.Path, pkc.Key, pkc.Count)
 	}
 
 	return nil
 }
 
-func processDirectory(inPath string, p *mpb.Progress, depth int, matcher *regexp.Regexp, keyValueSets map[string]map[string]int) error {
+func filterNames(names []os.DirEntry, matcher *regexp.Regexp) []os.DirEntry {
+	var result []os.DirEntry
+
+	for _, name := range names {
+		if matcher.MatchString(name.Name()) {
+			result = append(result, name)
+		}
+	}
+
+	return result
+}
+
+func processDirectory(p *mpb.Progress, inPath string, depth int, matcher *regexp.Regexp, keyValueSets map[string]map[string]int) error {
 	names, err := os.ReadDir(inPath)
 	if err != nil {
 		return fmt.Errorf("%w: stat %q: %w", ErrJsonStats, inPath, err)
 	}
 
 	pathName := filepath.Base(inPath)
+
+	names = filterNames(names, matcher)
 
 	var bar *mpb.Bar
 	var now time.Time
@@ -153,19 +173,17 @@ func processDirectory(inPath string, p *mpb.Progress, depth int, matcher *regexp
 	for _, name := range names {
 		entryPath := filepath.Join(inPath, name.Name())
 		if name.IsDir() {
-			err = processDirectory(entryPath, p, depth+1, matcher, keyValueSets)
+			err = processDirectory(p, entryPath, depth+1, matcher, keyValueSets)
 			if err != nil {
 				return err
 			}
 		} else if matcher != nil {
-			if matcher.MatchString(name.Name()) {
-				err = processJsonFile(entryPath, keyValueSets)
-				if err != nil {
-					return err
-				}
+			err = processJsonFile(p, entryPath, keyValueSets)
+			if err != nil {
+				return err
 			}
 		} else {
-			err = processJsonFile(entryPath, keyValueSets)
+			err = processJsonFile(p, entryPath, keyValueSets)
 			if err != nil {
 				return err
 			}
@@ -179,47 +197,41 @@ func processDirectory(inPath string, p *mpb.Progress, depth int, matcher *regexp
 	return nil
 }
 
-func processJsonFile(inPath string, keyValueSets map[string]map[string]int) error {
+func processJsonFile(p *mpb.Progress, inPath string, keyValueSets map[string]map[string]int) error {
 	file, err := os.Open(inPath)
 	if err != nil {
 		return fmt.Errorf("%w: opening %q: %w", ErrJsonStats, inPath, err)
 	}
 
-	entry := make(map[string]interface{})
-	err = json.NewDecoder(file).Decode(&entry)
+	stat, err := os.Stat(inPath)
 	if err != nil {
-		return fmt.Errorf("%w: decoding %q: %w", ErrJsonStats, inPath, err)
+		return fmt.Errorf("%w: getting stat for %q: %w", ErrJsonStats, inPath, err)
 	}
 
-	err = addKVs(".", entry, keyValueSets)
-	if err != nil {
-		return err
+	countReader := bondsmith_io.NewCountReader(file)
+	var reader io.Reader = countReader
+	if strings.HasSuffix(inPath, ".gz") {
+		reader, err = gzip.NewReader(countReader)
+		if err != nil {
+			return fmt.Errorf("%w: starting gzip reader stream for %q: %w", ErrJsonStats, inPath, err)
+		}
 	}
 
-	return nil
-}
+	entries := bondsmith_io.NewJsonReader(reader, func() *map[string]any {
+		v := make(map[string]any)
+		return &v
+	})
 
-func processJsonlFile(inPath string, p *mpb.Progress, keyValueSets map[string]map[string]int) error {
-	file, err := os.Open(inPath)
-	if err != nil {
-		return fmt.Errorf("%w: opening %q: %w", ErrJsonStats, inPath, err)
-	}
-
-	reader := bufio.NewReader(file)
-
-	stats, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("%w: reading stats of %q: %w", ErrJsonStats, inPath, err)
-	}
-
-	bar := p.AddBar(stats.Size(),
-		mpb.PrependDecorators(decor.AverageSpeed(decor.UnitKiB, "%.1f")),
+	bar := p.AddBar(stat.Size(),
 		mpb.AppendDecorators(decor.AverageETA(decor.ET_STYLE_GO)),
-		mpb.BarRemoveOnComplete())
+		mpb.PrependDecorators(decor.Name(filepath.Base(inPath))),
+		mpb.BarRemoveOnComplete(),
+	)
 
+	i := 0
+	lastSeen := 0
 	start := time.Now()
-	for {
-		line, err := reader.ReadBytes('\n')
+	for entry, err := range entries.Read() {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -227,19 +239,21 @@ func processJsonlFile(inPath string, p *mpb.Progress, keyValueSets map[string]ma
 			return err
 		}
 
-		entry := make(map[string]interface{})
-		err = json.Unmarshal(line, &entry)
+		err = addKVs(".", *entry, keyValueSets)
 		if err != nil {
 			return err
 		}
 
-		err = addKVs(".", entry, keyValueSets)
-		if err != nil {
-			return err
-		}
+		i++
+		if i%IncEvery == 0 {
+			curProgress := int(countReader.Count())
+			bar.IncrBy(curProgress-lastSeen, time.Since(start))
 
-		bar.IncrBy(len(line), time.Since(start))
+			lastSeen = curProgress
+		}
 	}
+	bar.IncrBy(int(countReader.Count())-lastSeen, time.Since(start))
+
 	return nil
 }
 
