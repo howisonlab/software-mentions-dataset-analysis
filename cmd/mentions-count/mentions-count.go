@@ -76,7 +76,6 @@ func runE(_ *cobra.Command, args []string) error {
 	}
 
 	entries = filterEntries(entries)
-	//entries = entries[:2]
 
 	bar := p.AddBar(int64(len(entries)),
 		mpb.PrependDecorators(decor.CountersNoUnit("%3d/%3d")),

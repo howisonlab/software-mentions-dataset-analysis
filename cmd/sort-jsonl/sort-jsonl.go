@@ -75,6 +75,12 @@ func sortFile(inPath string) error {
 			fmt.Println(err)
 		}
 	}()
+	defer func() {
+		err = writer.Close()
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
 
 	jsonWriter := bondsmith_io.NewJsonWriter(writer, sorted)
 	return jsonWriter.Write()
