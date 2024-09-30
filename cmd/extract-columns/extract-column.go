@@ -7,6 +7,8 @@ import (
 	"github.com/apache/arrow/go/v18/arrow"
 	"github.com/apache/arrow/go/v18/arrow/array"
 	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/compress"
 	"github.com/apache/arrow/go/v18/parquet/pqarrow"
 	"github.com/spf13/cobra"
 	bondsmith_io "github.com/willbeason/bondsmith-io"
@@ -97,7 +99,7 @@ func runE(_ *cobra.Command, args []string) error {
 	writer, err := pqarrow.NewFileWriter(
 		schema,
 		outFile,
-		nil,
+		parquet.NewWriterProperties(parquet.WithCompression(compress.Codecs.Gzip)),
 		pqarrow.DefaultWriterProps(),
 	)
 	if err != nil {
