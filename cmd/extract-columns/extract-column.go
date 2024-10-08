@@ -11,11 +11,12 @@ import (
 	"github.com/apache/arrow/go/v18/parquet/compress"
 	"github.com/apache/arrow/go/v18/parquet/pqarrow"
 	"github.com/spf13/cobra"
-	bondsmith_io "github.com/willbeason/bondsmith-io"
+	"github.com/willbeason/bondsmith/fileio"
+	"github.com/willbeason/bondsmith/jsonio"
+	"github.com/willbeason/software-mentions/pkg/tables"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func main() {
@@ -34,9 +35,6 @@ var cmd = cobra.Command{
 }
 
 func runE(_ *cobra.Command, args []string) error {
-	if args[0] != "papers" {
-		return fmt.Errorf("only papers is supported")
-	}
 	inPath := args[1]
 	outDir := args[2]
 
@@ -51,15 +49,133 @@ func runE(_ *cobra.Command, args []string) error {
 		}
 	}()
 
-	var reader io.Reader = inFile
-	if strings.HasSuffix(inPath, ".gz") {
-		reader, err = gzip.NewReader(reader)
+	var reader io.Reader
+	reader, err = toReader(inPath)
+	if err != nil {
+		return err
+	}
+
+	// gzip correctly handles concatenated files.
+	reader, err = gzip.NewReader(reader)
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "papers":
+		return extractPapers(reader, outDir, err)
+	case "software":
+		return extractSoftware(reader, outDir, err)
+	default:
+		return fmt.Errorf("must be either papers or software, not %s", args[0])
+	}
+}
+
+func toReader(inPath string) (*fileio.MultiReader, error) {
+	stat, err := os.Stat(inPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var inPaths []string
+	if stat.IsDir() {
+		entries, err := os.ReadDir(inPath)
 		if err != nil {
-			return err
+			return nil, err
+		}
+
+		for _, entry := range entries {
+			entryPath := filepath.Join(inPath, entry.Name())
+			inPaths = append(inPaths, entryPath)
+		}
+	} else {
+		inPaths = append(inPaths, inPath)
+	}
+
+	return fileio.NewMultiFileReader(inPaths), nil
+}
+
+type SoftwareMentions struct {
+	File     string            `json:"file"`
+	Mentions []SoftwareMention `json:"mentions"`
+}
+
+type SoftwareMention struct {
+	SoftwareName SoftwareName `json:"software-name"`
+	SoftwareType string       `json:"software-type"`
+}
+
+type SoftwareName struct {
+	NormalizedForm string `json:"normalizedForm"`
+	WikidataId     string `json:"wikidataId"`
+}
+
+func extractSoftware(reader io.Reader, outDir string, err error) error {
+	softwareMentions := jsonio.NewReader(reader, func() *SoftwareMentions {
+		return &SoftwareMentions{}
+	})
+
+	allocator := memory.NewGoAllocator()
+
+	softwareRecordBuilder := array.NewRecordBuilder(allocator, tables.SoftwareSchema)
+	defer softwareRecordBuilder.Release()
+
+	mentionsRecordBuilder := array.NewRecordBuilder(allocator, tables.MentionsSchema)
+	defer mentionsRecordBuilder.Release()
+
+	seenSoftware := make(map[string]bool)
+
+	for softwareMention, err := range softwareMentions.Read() {
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return err
+			}
+			break
+		}
+
+		for _, mention := range softwareMention.Mentions {
+			normalizedForm := mention.SoftwareName.NormalizedForm
+
+			mentionsRecordBuilder.Field(0).(*array.StringBuilder).
+				Append(softwareMention.File[:36])
+			mentionsRecordBuilder.Field(1).(*array.StringBuilder).
+				Append(normalizedForm)
+
+			// We assume software with the same normalizedForm are identical.
+			if seenSoftware[normalizedForm] {
+				continue
+			}
+			seenSoftware[normalizedForm] = true
+
+			softwareRecordBuilder.Field(0).(*array.StringBuilder).
+				Append(normalizedForm)
+			softwareRecordBuilder.Field(1).(*array.StringBuilder).
+				Append(mention.SoftwareName.WikidataId)
+			softwareRecordBuilder.Field(2).(*array.StringBuilder).
+				Append(mention.SoftwareType)
 		}
 	}
 
-	papers := bondsmith_io.NewJsonReader(reader, func() *Paper {
+	err = writeRecords(tables.SoftwareSchema, softwareRecordBuilder, outDir, tables.Software)
+	if err != nil {
+		return err
+	}
+
+	err = writeRecords(tables.MentionsSchema, mentionsRecordBuilder, outDir, tables.Mentions)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type Paper struct {
+	File string `json:"file"`
+	Year uint16 `json:"year"`
+}
+
+func extractPapers(reader io.Reader, outDir string, err error) error {
+	papers := jsonio.NewReader(reader, func() *Paper {
 		return &Paper{}
 	})
 
@@ -67,13 +183,6 @@ func runE(_ *cobra.Command, args []string) error {
 		{Name: "uuid", Type: arrow.BinaryTypes.String},
 		{Name: "year", Type: arrow.PrimitiveTypes.Uint16},
 	}, nil)
-
-	outPath := filepath.Join(outDir, "papers.parquet")
-	outFile, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	// Don't close outFile; parquet handles closing it.
 
 	allocator := memory.NewGoAllocator()
 	paperRecordBuilder := array.NewRecordBuilder(allocator, schema)
@@ -93,9 +202,19 @@ func runE(_ *cobra.Command, args []string) error {
 			Append(paper.Year)
 	}
 
-	record := paperRecordBuilder.NewRecord()
+	return writeRecords(schema, paperRecordBuilder, outDir, tables.Papers)
+}
+
+func writeRecords(schema *arrow.Schema, recordBuilder *array.RecordBuilder, outDir, outTable string) error {
+	record := recordBuilder.NewRecord()
 	defer record.Release()
 
+	outPath := filepath.Join(outDir, outTable+tables.ParquetExt)
+	outFile, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	// Don't close outFile; parquet handles closing it.
 	writer, err := pqarrow.NewFileWriter(
 		schema,
 		outFile,
@@ -118,9 +237,4 @@ func runE(_ *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-type Paper struct {
-	File string `json:"file"`
-	Year uint16 `json:"year"`
 }

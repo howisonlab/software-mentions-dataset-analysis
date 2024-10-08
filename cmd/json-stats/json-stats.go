@@ -7,7 +7,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
-	bondsmith_io "github.com/willbeason/bondsmith-io"
+	bondsmith "github.com/willbeason/bondsmith"
+	"github.com/willbeason/bondsmith/jsonio"
 	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"os"
@@ -208,7 +209,7 @@ func processJsonFile(p *mpb.Progress, inPath string, keyValueSets map[string]map
 		return fmt.Errorf("%w: getting stat for %q: %w", ErrJsonStats, inPath, err)
 	}
 
-	countReader := bondsmith_io.NewCountReader(file)
+	countReader := bondsmith.NewCountReader(file)
 	var reader io.Reader = countReader
 	if strings.HasSuffix(inPath, ".gz") {
 		reader, err = gzip.NewReader(countReader)
@@ -217,7 +218,7 @@ func processJsonFile(p *mpb.Progress, inPath string, keyValueSets map[string]map
 		}
 	}
 
-	entries := bondsmith_io.NewJsonReader(reader, func() *map[string]any {
+	entries := jsonio.NewReader(reader, func() *map[string]any {
 		v := make(map[string]any)
 		return &v
 	})

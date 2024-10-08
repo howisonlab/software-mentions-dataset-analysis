@@ -4,7 +4,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"github.com/spf13/cobra"
-	bondsmith_io "github.com/willbeason/bondsmith-io"
+	"github.com/willbeason/bondsmith/jsonio"
 	"github.com/willbeason/software-mentions/pkg/jsonl"
 	"io"
 	"os"
@@ -46,7 +46,7 @@ func sortFile(inPath string) error {
 		}
 	}
 
-	entries := bondsmith_io.NewJsonReader(reader, func() *map[string]any {
+	entries := jsonio.NewReader(reader, func() *map[string]any {
 		v := make(map[string]any)
 		return &v
 	})
@@ -82,6 +82,6 @@ func sortFile(inPath string) error {
 		}
 	}()
 
-	jsonWriter := bondsmith_io.NewJsonWriter(writer, sorted)
+	jsonWriter := jsonio.NewWriter(writer, sorted)
 	return jsonWriter.Write()
 }

@@ -1,24 +1,19 @@
 package main
 
 import (
-	"bufio"
-	"compress/gzip"
 	"errors"
 	"fmt"
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/parquet/file"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
 	"github.com/spf13/cobra"
-	"github.com/vbauerster/mpb"
-	"github.com/vbauerster/mpb/decor"
-	bondsmith_io "github.com/willbeason/bondsmith-io"
-	"golang.org/x/crypto/ssh/terminal"
+	"github.com/willbeason/software-mentions/pkg/tables"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
 	"sort"
-	"strings"
-	"sync"
-	"time"
 )
 
 func main() {
@@ -42,7 +37,7 @@ var cpuprofile *string
 
 var ErrCountLicenses = errors.New("counting software mentions")
 
-func runE(_ *cobra.Command, args []string) error {
+func runE(cmd *cobra.Command, args []string) error {
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
 		if err != nil {
@@ -60,149 +55,131 @@ func runE(_ *cobra.Command, args []string) error {
 		defer pprof.StopCPUProfile()
 	}
 
-	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+	inDir := args[0]
+
+	//softwarePath := filepath.Join(inDir, tables.Software+tables.ParquetExt)
+	mentionsPath := filepath.Join(inDir, tables.Mentions+tables.ParquetExt)
+
+	mentionsReader, err := file.OpenParquetFile(mentionsPath, true)
 	if err != nil {
-		return fmt.Errorf("%w: getting terminal size: %w", ErrCountLicenses, err)
-	}
-	p := mpb.New(mpb.WithWidth(width))
-
-	inPath := args[0]
-
-	softwareMap := make(map[string]int)
-
-	entries, err := os.ReadDir(inPath)
-	if err != nil {
-		return fmt.Errorf("%w: reading directory %q: %w", ErrCountLicenses, inPath, err)
+		return err
 	}
 
-	entries = filterEntries(entries)
+	fileReader, err := pqarrow.NewFileReader(
+		mentionsReader,
+		pqarrow.ArrowReadProperties{
+			Parallel:  true,
+			BatchSize: 1 << 20,
+		},
+		nil)
+	if err != nil {
+		return err
+	}
 
-	bar := p.AddBar(int64(len(entries)),
-		mpb.PrependDecorators(decor.CountersNoUnit("%3d/%3d")),
-		mpb.AppendDecorators(decor.AverageETA(decor.ET_STYLE_HHMMSS)),
-		mpb.BarRemoveOnComplete())
+	ctx := cmd.Context()
+	recordReader, err := fileReader.GetRecordReader(ctx, nil, nil)
+	if err != nil {
+		return err
+	}
 
-	start := time.Now()
-	mergeWg := sync.WaitGroup{}
-	mergeWg.Add(1)
+	softwareByPaper := make(map[string]map[string]bool)
 
-	maps := make(chan map[string]int, 10)
-	go func() {
-		for entrySoftwareMap := range maps {
-			for name, count := range entrySoftwareMap {
-				softwareMap[name] += count
-			}
-		}
-		mergeWg.Done()
-	}()
-
-	for _, entry := range entries {
-		entryPath := filepath.Join(inPath, entry.Name())
-
-		entrySoftwareMap, err := processFile(entryPath)
+	for {
+		record, err := recordReader.Read()
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			return err
 		}
 
-		maps <- entrySoftwareMap
+		paperIds := record.Column(0).(*array.String)
+		softwareIds := record.Column(1).(*array.String)
 
-		bar.IncrBy(1, time.Since(start))
+		for row := range int(record.NumRows()) {
+			paperId := paperIds.Value(row)
+			softwareId := softwareIds.Value(row)
+
+			if ignoreSoftware[softwareId] {
+				continue
+			}
+
+			paperSoftware, ok := softwareByPaper[paperId]
+			if !ok {
+				paperSoftware = make(map[string]bool)
+			}
+
+			paperSoftware[softwareId] = true
+			softwareByPaper[paperId] = paperSoftware
+		}
 	}
-	bar.SetTotal(int64(len(entries)), true)
 
-	close(maps)
-	mergeWg.Wait()
+	nMentions := make(map[string]int)
+	for _, paperSoftware := range softwareByPaper {
+		for softwareId := range paperSoftware {
+			nMentions[softwareId]++
+		}
+	}
 
-	var software []string
-	for k, count := range softwareMap {
+	allowMap := make(map[string]bool)
+
+	var softwareList []string
+	for k, count := range nMentions {
 		if count < 100 {
 			continue
 		}
-		software = append(software, k)
+		allowMap[k] = true
+		softwareList = append(softwareList, k)
 	}
 
-	for _, s := range software {
-		allowMap[s] = true
-	}
+	fmt.Println(len(softwareList))
 
-	sort.Slice(software, func(i, j int) bool {
-		return softwareMap[software[i]] > softwareMap[software[j]]
+	sort.Slice(softwareList, func(i, j int) bool {
+		return nMentions[softwareList[i]] > nMentions[softwareList[j]]
 	})
 
-	for _, entry := range software[:100] {
-		fmt.Printf("%s;%d\n", entry, softwareMap[entry])
+	for i, softwareId := range softwareList[:10] {
+		fmt.Printf("%d;%s;%d\n", i, softwareId, nMentions[softwareId])
 	}
 
-	dyadMap := make(map[MentionDyad]int)
+	comentionsCounts := make(map[MentionDyad]int)
 
-	merge2Wg := sync.WaitGroup{}
-	merge2Wg.Add(1)
-	maps2 := make(chan map[MentionDyad]int, 10)
-	go func() {
-		for entryDyadMap := range maps2 {
-			for dyad, count := range entryDyadMap {
-				dyadMap[dyad] += count
+	for _, mentions := range softwareByPaper {
+		for k := range mentions {
+			if !allowMap[k] {
+				continue
+			}
+			for l := range mentions {
+				if !allowMap[l] {
+					continue
+				}
+
+				if k >= l {
+					continue
+				}
+
+				comentionsCounts[MentionDyad{_1: k, _2: l}]++
 			}
 		}
-		merge2Wg.Done()
-	}()
-
-	bar2 := p.AddBar(int64(len(entries)),
-		mpb.PrependDecorators(decor.CountersNoUnit("%3d/%3d")),
-		mpb.AppendDecorators(decor.AverageETA(decor.ET_STYLE_HHMMSS)),
-		mpb.BarRemoveOnComplete())
-
-	for _, entry := range entries {
-		entryPath := filepath.Join(inPath, entry.Name())
-
-		entryDyadMap, err := processFile2(entryPath)
-		if err != nil {
-			return err
-		}
-
-		maps2 <- entryDyadMap
-
-		bar2.IncrBy(1, time.Since(start))
 	}
-	bar2.SetTotal(int64(len(entries)), true)
 
-	close(maps2)
-	merge2Wg.Wait()
-
-	var dyads []MentionDyad
-	for k, count := range dyadMap {
+	var comentionsList []MentionDyad
+	for k, count := range comentionsCounts {
 		if count < 100 {
 			continue
 		}
-		dyads = append(dyads, k)
+		comentionsList = append(comentionsList, k)
 	}
 
-	sort.Slice(dyads, func(i, j int) bool {
-		return dyadMap[dyads[i]] > dyadMap[dyads[j]]
+	sort.Slice(comentionsList, func(i, j int) bool {
+		return comentionsCounts[comentionsList[i]] > comentionsCounts[comentionsList[j]]
 	})
 
-	for i, entry := range dyads {
-		if i > 100 {
-			break
-		}
-		fmt.Printf("%s;%s;%d\n", entry._1, entry._2, dyadMap[entry])
+	for _, dyad := range comentionsList[:20] {
+		fmt.Printf("%s;%s;%d\n", dyad._1, dyad._2, comentionsCounts[dyad])
 	}
-
-	// Add newline to prevent last line of output from being consumed by progress bar.
-	fmt.Println()
 
 	return nil
-}
-
-func filterEntries(entries []os.DirEntry) []os.DirEntry {
-	filtered := make([]os.DirEntry, 0, len(entries))
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".software.jsonl.gz") {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	return filtered
 }
 
 type MentionDyad struct {
@@ -210,170 +187,15 @@ type MentionDyad struct {
 	_2 string
 }
 
-var allowMap = make(map[string]bool)
+var ignoreSoftware = map[string]bool{
+	"script":    true,
+	"code":      true,
+	"scripts":   true,
+	"survival":  true,
+	"library":   true,
+	"software":  true,
+	"interface": true,
+	"program":   true,
+}
 
 const IncrEvery = 1 << 10
-
-func processFile(inPath string) (map[string]int, error) {
-	file, err := os.Open(inPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: opening %q: %w", ErrCountLicenses, inPath, err)
-	}
-	defer func() {
-		err := file.Close()
-		if err != nil {
-			log.Printf("error closing %q: %v\n", inPath, err)
-		}
-	}()
-
-	gzipReader, err := gzip.NewReader(file)
-	if err != nil {
-		return nil, fmt.Errorf("%w: opening gzip reader for %q: %w", ErrCountLicenses, inPath, err)
-	}
-	defer func() {
-		err := gzipReader.Close()
-		if err != nil {
-			log.Printf("error closing %q: %v\n", inPath, err)
-		}
-	}()
-
-	reader := bufio.NewReader(gzipReader)
-
-	if strings.Contains(inPath, "software.jsonl.gz") {
-		jsonReader := bondsmith_io.NewJsonReader(reader, func() *Paper {
-			return &Paper{}
-		})
-
-		fileSoftwareMap := make(map[string]int)
-
-		for paper, err := range jsonReader.Read() {
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				return nil, err
-			}
-
-			for _, mention := range paper.Mentions {
-				if mention.SoftwareType == "implicit" {
-					continue
-				}
-				switch mention.SoftwareName.NormalizedForm {
-				case "script", "code", "scripts", "survival", "library", "software", "interface", "program":
-					continue
-				}
-
-				fileSoftwareMap[mention.SoftwareName.NormalizedForm]++
-			}
-		}
-
-		return fileSoftwareMap, nil
-	} else if strings.Contains(inPath, "software.pbl.gz") {
-		return nil, fmt.Errorf("%w: proto not implemented yet: %q", ErrCountLicenses, inPath)
-	} else {
-		return nil, fmt.Errorf("%w: got unknown file extension for %q", ErrCountLicenses, inPath)
-	}
-}
-
-func processFile2(inPath string) (map[MentionDyad]int, error) {
-	file, err := os.Open(inPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: opening %q: %w", ErrCountLicenses, inPath, err)
-	}
-	defer func() {
-		err := file.Close()
-		if err != nil {
-			log.Printf("error closing %q: %v\n", inPath, err)
-		}
-	}()
-
-	gzipReader, err := gzip.NewReader(file)
-	if err != nil {
-		return nil, fmt.Errorf("%w: opening gzip reader for %q: %w", ErrCountLicenses, inPath, err)
-	}
-	defer func() {
-		err := gzipReader.Close()
-		if err != nil {
-			log.Printf("error closing %q: %v\n", inPath, err)
-		}
-	}()
-
-	reader := bufio.NewReader(gzipReader)
-
-	if strings.Contains(inPath, "software.jsonl.gz") {
-		jsonReader := bondsmith_io.NewJsonReader(reader, func() *Paper {
-			return &Paper{}
-		})
-
-		dyadMap := make(map[MentionDyad]int)
-
-		for paper, err := range jsonReader.Read() {
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				return nil, err
-			}
-
-			seenInPaper := make(map[string]bool)
-
-			sort.Slice(paper.Mentions, func(i, j int) bool {
-				return paper.Mentions[i].SoftwareName.NormalizedForm < paper.Mentions[j].SoftwareName.NormalizedForm
-			})
-
-			for i, mention := range paper.Mentions {
-				if !allowMap[mention.SoftwareName.NormalizedForm] {
-					continue
-				}
-				if seenInPaper[mention.SoftwareName.NormalizedForm] {
-					continue
-				}
-				seenInPaper[mention.SoftwareName.NormalizedForm] = true
-
-				seenInMention := make(map[string]bool)
-
-				for _, mention2 := range paper.Mentions[i+1:] {
-					if !allowMap[mention2.SoftwareName.NormalizedForm] {
-						continue
-					}
-					if seenInMention[mention2.SoftwareName.NormalizedForm] {
-						continue
-					}
-					seenInMention[mention2.SoftwareName.NormalizedForm] = true
-
-					if mention.SoftwareName.NormalizedForm == mention2.SoftwareName.NormalizedForm {
-						continue
-					}
-
-					dyad := MentionDyad{_1: mention.SoftwareName.NormalizedForm, _2: mention2.SoftwareName.NormalizedForm}
-					dyadMap[dyad]++
-				}
-			}
-		}
-
-		return dyadMap, nil
-	} else if strings.Contains(inPath, "software.pbl.gz") {
-		return nil, fmt.Errorf("%w: proto not implemented yet: %q", ErrCountLicenses, inPath)
-	} else {
-		return nil, fmt.Errorf("%w: got unknown file extension for %q", ErrCountLicenses, inPath)
-	}
-}
-
-var zeroPaper = &Paper{}
-
-type Paper struct {
-	Mentions []Mention `json:"mentions"`
-}
-
-func (p *Paper) Reset() {
-	*p = *zeroPaper
-}
-
-type Mention struct {
-	SoftwareName SoftwareName `json:"software-name"`
-	SoftwareType string       `json:"software-type"`
-}
-
-type SoftwareName struct {
-	NormalizedForm string `json:"NormalizedForm"`
-}
