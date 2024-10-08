@@ -9,6 +9,7 @@ import (
 	"github.com/vbauerster/mpb/decor"
 	bondsmith "github.com/willbeason/bondsmith"
 	"github.com/willbeason/bondsmith/jsonio"
+	"github.com/willbeason/software-mentions/pkg/jsonl"
 	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"os"
@@ -22,7 +23,6 @@ import (
 const IncEvery = 1 << 10
 
 func main() {
-	cmd.Flags().String("pattern", "", "suffix to match against file names")
 	cmd.Flags().String("out", "", "output file path (default: stdout)")
 
 	err := cmd.Execute()
@@ -32,7 +32,7 @@ func main() {
 }
 
 var cmd = cobra.Command{
-	Use:     "json-stats FILE | DIR",
+	Use:     "json-stats FILE|DIR",
 	Short:   "Collect statistics about keys and values in .jsonl files",
 	Args:    cobra.ExactArgs(1),
 	Version: "0.1.0",
@@ -49,12 +49,9 @@ func runE(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%w: stat %q: %w", ErrJsonStats, inPath, err)
 	}
 
-	keyValueSets := make(map[string]map[string]int)
+	keyValueSets := make(map[string]jsonl.Field)
 
-	pattern, err := cmd.Flags().GetString("pattern")
-	if err != nil {
-		return err
-	}
+	pattern := `[0-9a-f]{2}\.software\.jsonl\.gz`
 
 	width, _, err := terminal.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
@@ -63,12 +60,9 @@ func runE(cmd *cobra.Command, args []string) error {
 	p := mpb.New(mpb.WithWidth(width))
 
 	if f.IsDir() {
-		var matcher *regexp.Regexp
-		if pattern != "" {
-			matcher, err = regexp.Compile(pattern)
-			if err != nil {
-				return fmt.Errorf("%w: compiling pattern %q: %w", ErrJsonStats, pattern, err)
-			}
+		matcher, err := regexp.Compile(pattern)
+		if err != nil {
+			return fmt.Errorf("%w: compiling pattern %q: %w", ErrJsonStats, pattern, err)
 		}
 		err = processDirectory(p, inPath, 0, matcher, keyValueSets)
 		if err != nil {
@@ -90,26 +84,6 @@ func runE(cmd *cobra.Command, args []string) error {
 		i++
 	}
 	sort.Strings(paths)
-	for _, path := range paths {
-		fmt.Println(path)
-	}
-
-	var pkcs []PathKeyCount
-	for path, keyCounts := range keyValueSets {
-		if len(keyCounts) > 100 {
-			continue
-		}
-		for key, count := range keyCounts {
-			pkcs = append(pkcs, PathKeyCount{Path: path, Key: key, Count: count})
-		}
-	}
-
-	sort.Slice(pkcs, func(i, j int) bool {
-		if pkcs[i].Path != pkcs[j].Path {
-			return pkcs[i].Path < pkcs[j].Path
-		}
-		return pkcs[i].Count > pkcs[j].Count
-	})
 
 	outPath, err := cmd.Flags().GetString("out")
 	if err != nil {
@@ -124,11 +98,12 @@ func runE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	for _, pkc := range pkcs {
-		if pkc.Count < 10 {
+	for _, path := range paths {
+		field, ok := keyValueSets[path]
+		if !ok {
 			continue
 		}
-		_, err = fmt.Fprintf(outFile, "%s;%q;%d\n", pkc.Path, pkc.Key, pkc.Count)
+		_, err = fmt.Fprintf(outFile, "%s;%s\n", path, field)
 	}
 
 	return nil
@@ -146,7 +121,7 @@ func filterNames(names []os.DirEntry, matcher *regexp.Regexp) []os.DirEntry {
 	return result
 }
 
-func processDirectory(p *mpb.Progress, inPath string, depth int, matcher *regexp.Regexp, keyValueSets map[string]map[string]int) error {
+func processDirectory(p *mpb.Progress, inPath string, depth int, matcher *regexp.Regexp, keyValueSets map[string]jsonl.Field) error {
 	names, err := os.ReadDir(inPath)
 	if err != nil {
 		return fmt.Errorf("%w: stat %q: %w", ErrJsonStats, inPath, err)
@@ -198,7 +173,7 @@ func processDirectory(p *mpb.Progress, inPath string, depth int, matcher *regexp
 	return nil
 }
 
-func processJsonFile(p *mpb.Progress, inPath string, keyValueSets map[string]map[string]int) error {
+func processJsonFile(p *mpb.Progress, inPath string, keyValueSets map[string]jsonl.Field) error {
 	file, err := os.Open(inPath)
 	if err != nil {
 		return fmt.Errorf("%w: opening %q: %w", ErrJsonStats, inPath, err)
@@ -240,7 +215,7 @@ func processJsonFile(p *mpb.Progress, inPath string, keyValueSets map[string]map
 			return err
 		}
 
-		err = addKVs(".", *entry, keyValueSets)
+		err = addKVs("", *entry, keyValueSets)
 		if err != nil {
 			return err
 		}
@@ -258,37 +233,9 @@ func processJsonFile(p *mpb.Progress, inPath string, keyValueSets map[string]map
 	return nil
 }
 
-type PathKeyCount struct {
-	Path  string
-	Key   string
-	Count int
-}
-
-var ErrUnhandledType = errors.New("unhandled type")
-
-func addKVs(path string, obj interface{}, kvs map[string]map[string]int) error {
-	if len(kvs[path]) > 100 {
-		return nil
-	}
-
-	pathCounts := kvs[path]
-	if pathCounts == nil {
-		pathCounts = make(map[string]int)
-	}
+func addKVs(path string, obj interface{}, kvs map[string]jsonl.Field) error {
 
 	switch o := obj.(type) {
-	case nil:
-		// ignore
-	case bool:
-		if o {
-			pathCounts["true"]++
-		} else {
-			pathCounts["false"]++
-		}
-	case string:
-		pathCounts[o]++
-	case float64:
-		pathCounts[fmt.Sprintf("%f", o)]++
 	case []interface{}:
 		for _, v := range o {
 			err := addKVs(fmt.Sprintf("%s[]", path), v, kvs)
@@ -298,16 +245,23 @@ func addKVs(path string, obj interface{}, kvs map[string]map[string]int) error {
 		}
 	case map[string]interface{}:
 		for k, v := range o {
-			err := addKVs(fmt.Sprintf("%s%s.", path, k), v, kvs)
+			err := addKVs(fmt.Sprintf("%s.%s", path, k), v, kvs)
 			if err != nil {
 				return err
 			}
 		}
 	default:
-		return fmt.Errorf("%w: %T", ErrUnhandledType, o)
-	}
+		pathCounts := kvs[path]
+		if pathCounts == nil {
+			pathCounts = &jsonl.NullField{}
+		}
 
-	kvs[path] = pathCounts
+		pathCounts, err := pathCounts.Add(obj)
+		if err != nil {
+			return err
+		}
+		kvs[path] = pathCounts
+	}
 
 	return nil
 }
