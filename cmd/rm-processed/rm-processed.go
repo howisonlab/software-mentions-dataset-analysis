@@ -17,6 +17,10 @@ const UUIDPattern = `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 var (
 	PaperPattern    = regexp.MustCompile(UUIDPattern + `\.json$`)
 	SoftwarePattern = regexp.MustCompile(UUIDPattern + `\.software\.json$`)
+	JatsPattern     = regexp.MustCompile(UUIDPattern + `\.jats\.software\.json$`)
+	PubPattern      = regexp.MustCompile(UUIDPattern + `\.pub2tei\.tei\.software\.json$`)
+	LatexPattern    = regexp.MustCompile(UUIDPattern + `\.latex\.tei\.software\.json$`)
+	GrobidPattern   = regexp.MustCompile(UUIDPattern + `\.grobid\.tei\.software\.json$`)
 )
 
 func main() {
@@ -140,9 +144,13 @@ func processEntry(p *mpb.Progress, entryPath string, entry os.DirEntry) error {
 
 func processFile(path string) error {
 	name := filepath.Base(path)
-	if PaperPattern.MatchString(name) {
-		return os.Remove(path)
-	} else if SoftwarePattern.MatchString(name) {
+	if PaperPattern.MatchString(name) ||
+		SoftwarePattern.MatchString(name) ||
+		JatsPattern.MatchString(name) ||
+		PubPattern.MatchString(name) ||
+		LatexPattern.MatchString(name) ||
+		GrobidPattern.MatchString(name) {
+
 		return os.Remove(path)
 	}
 

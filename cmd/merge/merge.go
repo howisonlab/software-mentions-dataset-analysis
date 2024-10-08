@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -77,16 +78,56 @@ func ProcessDir(inDir, outDir string) error {
 
 	start := time.Now()
 	for _, entry := range entries {
-		skipped, err := processEntry(p, inDir, outDir, entry)
+		err = processEntry2(p, inDir, outDir, entry)
 		if err != nil {
 			return err
 		}
 
-		if skipped {
-			nTotal--
-			bar.SetTotal(nTotal, false)
-		} else {
-			bar.IncrBy(1, time.Since(start))
+		bar.IncrBy(1, time.Since(start))
+	}
+
+	return nil
+}
+
+func processEntry2(p *mpb.Progress, inDir, outDir string, entry os.DirEntry) error {
+	patterns := []string{
+		".jats.software.json",
+		".pub2tei.tei.json",
+		".latex.tei.software.json",
+		".grobid.tei.software.json",
+	}
+
+	compressedSuffix := "l.gz"
+
+	writers := make(map[string]io.Writer)
+	for _, pattern := range patterns {
+		file, err := os.Create(filepath.Join(outDir, entry.Name()+pattern+compressedSuffix))
+		if err != nil {
+			return err
+		}
+		defer func() {
+			err2 := file.Close()
+			if err2 != nil {
+				fmt.Println(err2)
+			}
+		}()
+
+		gzipWriter := gzip.NewWriter(file)
+		defer func() {
+			err2 := gzipWriter.Close()
+			if err2 != nil {
+				fmt.Println(err2)
+			}
+		}()
+
+		writers[pattern] = bufio.NewWriter(gzipWriter)
+	}
+
+	for pattern, writer := range writers {
+		regex := regexp.MustCompile(UUIDPattern + pattern + "$")
+		err := processDir(p, filepath.Join(inDir, entry.Name()), regex, writer)
+		if err != nil {
+			return err
 		}
 	}
 
